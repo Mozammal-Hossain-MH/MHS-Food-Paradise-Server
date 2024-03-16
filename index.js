@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { MongoClient, ServerApiVersion, Db, ObjectId } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const app = express();
@@ -39,6 +39,7 @@ async function run() {
     // jwt related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
+      console.log(user)
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' })
       res.send({ token })
     })
@@ -80,7 +81,7 @@ async function run() {
       res.send(result);
     })
 
-    app.get('/users/admin/:email', verifyToken, verifyAdmin, async (req, res) => {
+    app.get('/users/admin/:email', verifyToken, async (req, res) => {
       const email = req.params.email;
       if (email !== req.decoded.email) {
         return res.status(403).send({ message: 'forbidden access' })
@@ -122,7 +123,7 @@ async function run() {
       res.send(result);
     })
 
-    app.delete('/users/:id', async (req, res) => {
+    app.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await usersCollection.deleteOne(query);
@@ -135,6 +136,75 @@ async function run() {
       res.send(result);
     })
 
+    app.get('/menu/:id', async (req, res) => {
+      const id = req.params.id;
+      console.log(id);
+      const query = { _id: id };
+      const query2 = { _id: new ObjectId(id) };
+      const result = await menuCollection.findOne(query);
+      if (!result) {
+        const result2 = await menuCollection.findOne(query2);
+        return res.send(result2);
+      }
+      res.send(result);
+    });
+
+    app.post('/menu', verifyToken, verifyAdmin, async (req, res) => {
+      const menuItem = req.body;
+      const result = await menuCollection.insertOne(menuItem);
+      res.send(result);
+    })
+
+    app.patch('/menu/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const menuItem = req.body
+      const id = req.params.id;
+      console.log(menuItem, id)
+      if (menuItem.image) {
+        const filter = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: {
+            name: menuItem.name,
+            category: menuItem.category,
+            price: menuItem.price,
+            recipe: menuItem.recipe,
+            image: menuItem.image,
+          }
+        }
+        const result = await menuCollection.updateOne(filter, updatedDoc);
+        if (result.modifiedCount === 0) {
+          const filter2 = { _id: id }
+          const result2 = await menuCollection.updateOne(filter2, updatedDoc);
+          return res.send(result2);
+        }
+        return res.send(result);
+      }
+      else {
+        const filter = { _id: new ObjectId(id) };
+        const filter2 = { _id: id };
+        const updatedDoc = {
+          $set: {
+            name: menuItem.name,
+            category: menuItem.category,
+            price: menuItem.price,
+            recipe: menuItem.recipe
+          }
+        }
+        const result = await menuCollection.updateOne(filter, updatedDoc);
+        if (result.modifiedCount === 0) {
+          const result2 = await menuCollection.updateOne(filter2, updatedDoc);
+          return res.send(result2);
+        }
+        return res.send(result);
+      }
+    })
+
+    app.delete('/menu/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await menuCollection.deleteOne(query);
+      res.send(result);
+    })
+
     // reviews collection
     app.get('/reviews', async (req, res) => {
       const result = await reviewsCollection.find().toArray();
@@ -142,7 +212,8 @@ async function run() {
     })
 
     // carts collection
-    app.get('/carts', async (req, res) => {
+
+    app.get('/carts',verifyToken, async (req, res) => {
       const query = { email: req.query.email };
       const result = await cartsCollection.find(query).toArray();
       res.send(result);
