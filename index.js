@@ -34,7 +34,7 @@ const paymentsCollection = client.db('MHSdb').collection('payments');
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
 
 
@@ -221,13 +221,13 @@ async function run() {
       res.send(result);
     })
 
-    app.post('/carts',verifyToken, async (req, res) => {
+    app.post('/carts', verifyToken, async (req, res) => {
       const cartItem = req.body;
       const result = await cartsCollection.insertOne(cartItem);
       res.send(result);
     })
 
-    app.delete('/carts/:id',verifyToken, async (req, res) => {
+    app.delete('/carts/:id', verifyToken, async (req, res) => {
       const id = req.params.id;
       console.log(id)
       const query = { _id: new ObjectId(id) };
@@ -254,7 +254,7 @@ async function run() {
     })
 
     // payment related api
-    app.get('/payments', async (req, res) => {
+    app.get('/payments', verifyToken, async (req, res) => {
       const email = req.query.email;
       // if(email !== req.decoded.email){
       //   return res.status(403).send({message: 'forbidden'})
@@ -264,7 +264,7 @@ async function run() {
       res.send(result);
     })
 
-    app.post('/payments',verifyToken, async (req, res) => {
+    app.post('/payments', verifyToken, async (req, res) => {
       const payment = req.body;
       console.log(payment);
       const paymentResult = await paymentsCollection.insertOne(payment);
@@ -280,10 +280,120 @@ async function run() {
       res.send({ paymentResult, deleteResult });
     })
 
+    // stats or analytics
+    app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+      const users = await usersCollection.estimatedDocumentCount();
+      const products = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentsCollection.estimatedDocumentCount();
+
+      // this is not the best way
+      // const payments = await paymentsCollection.find().toArray();
+      // const revenue = payments.reduce((total, payment) => total + parseFloat(payment.amount), 0)
+
+      const result = await paymentsCollection.aggregate([
+        {
+          $group: {
+            _id: null,
+            revenue: { $sum: "$amount" }
+          }
+        }
+      ]).toArray();
+
+      const revenue = result.length > 0 ? result[0].revenue : 0;
+
+
+      res.send({
+        users,
+        products,
+        orders,
+        revenue
+      })
+    })
+
+    /**
+     * ------------------------
+     * Non efficient way
+     * ------------------------
+     * 
+     * 1. load all the payments
+     * 2. For every menuItemIds (which is an array) go find the item from menu collection
+     * 3. for every item in the menu collection that you found from a payment entry (document)
+    */
+
+    // using aggregate pipeline
+    app.get('/order-stats',verifyToken, verifyAdmin, async (req, res) => {
+      const result = await paymentsCollection.aggregate([
+        {
+          $unwind: '$menuIds'
+        },
+        {
+          $lookup: {
+            from: 'menu',
+            localField: 'menuIds',
+            foreignField: '_id',
+            as: 'menuItem'
+          }
+        },
+        {
+          $unwind: '$menuItem'
+        },
+        {
+          $group: {
+            _id: '$menuItem.category',
+            quantity: { $sum: 1 },
+            revenue: { $sum: '$menuItem.price' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            category: '$_id',
+            quantity: '$quantity',
+            revenue: '$revenue'
+          }
+        },
+        // {
+        //   $addFields: {
+        //     menuObjectId: { $toObjectId: '$menuIds' }
+        //   }
+        // },
+        // {
+        //   $lookup: {
+        //     from: 'menu',
+        //     localField: 'menuObjectId',
+        //     foreignField: '_id',
+        //     as: 'menuItemObj'
+        //   }
+        // },
+        // {
+        //   $unwind: '$menuItemObj'
+        // },
+        // {
+        //   $group: {
+        //     _id: '$menuItemObj.category',
+        //     quantityObj: { $sum: 1 },
+        //     revenueObj: { $sum: {$toDouble: '$menuItemObj.price.$numberDouble'} }
+        //   }
+        // },
+        // {
+        //   $project: {
+        //     _id: 0,
+        //     category: '$_id',
+        //     quantity2: '$quantity',
+        //     revenue2: '$revenue',
+        //     quantityObj2: '$quantityObj',
+        //     revenueObj2: '$revenueObj'
+        //   }
+        // }
+      ]).toArray();
+      res.send(result);
+    })
+
+
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
