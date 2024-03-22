@@ -7,6 +7,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const app = express();
 const port = process.env.PORT || 5000;
 
+
 // middlewares
 app.use(cors());
 app.use(express.json());
@@ -29,26 +30,26 @@ const usersCollection = client.db('MHSdb').collection('users');
 const menuCollection = client.db('MHSdb').collection('menu');
 const reviewsCollection = client.db('MHSdb').collection('reviews');
 const cartsCollection = client.db('MHSdb').collection('carts');
+const reservationsCollection = client.db('MHSdb').collection('reservations');
 const paymentsCollection = client.db('MHSdb').collection('payments');
 
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
+    await client.connect();
 
 
 
     // jwt related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
-      console.log(user)
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' })
       res.send({ token })
     })
 
     // ?middlewares
     const verifyToken = (req, res, next) => {
-      console.log('inside verify token bearer:', req.headers.authorization)
+      // console.log('inside verify token bearer:', req.headers.authorization)
       if (!req.headers.authorization) {
         return res.status(401).send({ message: 'unauthorized access' })
       }
@@ -141,13 +142,8 @@ async function run() {
     app.get('/menu/:id', async (req, res) => {
       const id = req.params.id;
       console.log(id);
-      const query = { _id: id };
-      const query2 = { _id: new ObjectId(id) };
+      const query = { _id: new ObjectId(id) };
       const result = await menuCollection.findOne(query);
-      if (!result) {
-        const result2 = await menuCollection.findOne(query2);
-        return res.send(result2);
-      }
       res.send(result);
     });
 
@@ -173,16 +169,10 @@ async function run() {
           }
         }
         const result = await menuCollection.updateOne(filter, updatedDoc);
-        if (result.modifiedCount === 0) {
-          const filter2 = { _id: id }
-          const result2 = await menuCollection.updateOne(filter2, updatedDoc);
-          return res.send(result2);
-        }
         return res.send(result);
       }
       else {
         const filter = { _id: new ObjectId(id) };
-        const filter2 = { _id: id };
         const updatedDoc = {
           $set: {
             name: menuItem.name,
@@ -192,10 +182,6 @@ async function run() {
           }
         }
         const result = await menuCollection.updateOne(filter, updatedDoc);
-        if (result.modifiedCount === 0) {
-          const result2 = await menuCollection.updateOne(filter2, updatedDoc);
-          return res.send(result2);
-        }
         return res.send(result);
       }
     })
@@ -235,6 +221,29 @@ async function run() {
       res.send(result);
     })
 
+    // reservation collection
+    app.get('/reservation', verifyToken, async (req, res) => {
+      const email = req.query.email;
+      const query = { userEmail: email };
+      const result = await reservationsCollection.find(query).toArray();
+      res.send(result);
+    })
+
+    app.post('/reservation', verifyToken, async (req, res) => {
+      const data = req.body;
+      console.log(data);
+      const result = await reservationsCollection.insertOne(data);
+      res.send(result);
+    })
+
+    app.delete('/reservation/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await reservationsCollection.deleteOne(query);
+      console.log(result)
+      res.send(result);
+    })
+
     // payment intent
     app.post('/create-payment-intent', async (req, res) => {
       const { price } = req.body;
@@ -270,14 +279,26 @@ async function run() {
       const paymentResult = await paymentsCollection.insertOne(payment);
 
       // carefully delete all items from the cart
-      const query = {
-        _id: {
-          $in: payment.cartIds.map(id => new ObjectId(id))
-        }
-      }
-      const deleteResult = await cartsCollection.deleteMany(query);
 
-      res.send({ paymentResult, deleteResult });
+
+      if (payment.category === 'Reservation') {
+        const reservationQuery = {
+          _id: {
+            $in: payment.reservationIds?.map(id => new ObjectId(id))
+          }
+        }
+        const deleteResult = await reservationsCollection.deleteMany(reservationQuery);
+        return res.send({ paymentResult, deleteResult });
+      }
+      else {
+        const cartQuery = {
+          _id: {
+            $in: payment.cartIds?.map(id => new ObjectId(id))
+          }
+        }
+        const deleteResult = await cartsCollection.deleteMany(cartQuery);
+        return res.send({ paymentResult, deleteResult });
+      }
     })
 
     // stats or analytics
@@ -321,15 +342,25 @@ async function run() {
     */
 
     // using aggregate pipeline
-    app.get('/order-stats',verifyToken, verifyAdmin, async (req, res) => {
+    app.get('/order-stats', async (req, res) => {
       const result = await paymentsCollection.aggregate([
+        {
+          $match: {
+            menuIds: {$ne: false}
+          }
+        },
         {
           $unwind: '$menuIds'
         },
         {
+          $addFields: {
+            menuObjectId: { $toObjectId: '$menuIds' }
+          }
+        },
+        {
           $lookup: {
             from: 'menu',
-            localField: 'menuIds',
+            localField: 'menuObjectId',
             foreignField: '_id',
             as: 'menuItem'
           }
@@ -351,40 +382,35 @@ async function run() {
             quantity: '$quantity',
             revenue: '$revenue'
           }
+        }
+      ]).toArray();
+      res.send(result);
+    })
+
+    app.get('/single-user-data', verifyToken, async (req, res) => {
+      const email = req.query.email;
+      const result = await paymentsCollection.aggregate([
+        {
+          $match: { email: email }
         },
-        // {
-        //   $addFields: {
-        //     menuObjectId: { $toObjectId: '$menuIds' }
-        //   }
-        // },
-        // {
-        //   $lookup: {
-        //     from: 'menu',
-        //     localField: 'menuObjectId',
-        //     foreignField: '_id',
-        //     as: 'menuItemObj'
-        //   }
-        // },
-        // {
-        //   $unwind: '$menuItemObj'
-        // },
-        // {
-        //   $group: {
-        //     _id: '$menuItemObj.category',
-        //     quantityObj: { $sum: 1 },
-        //     revenueObj: { $sum: {$toDouble: '$menuItemObj.price.$numberDouble'} }
-        //   }
-        // },
-        // {
-        //   $project: {
-        //     _id: 0,
-        //     category: '$_id',
-        //     quantity2: '$quantity',
-        //     revenue2: '$revenue',
-        //     quantityObj2: '$quantityObj',
-        //     revenueObj2: '$revenueObj'
-        //   }
-        // }
+        {
+          $group: {
+            _id: null,
+            wastedMoney: { $sum: '$amount' },
+            totalOrder: { $sum: 1 },
+            totalItem: {
+              $sum: {
+                $size: {
+                  $cond: [
+                    { $isArray: '$menuIds' },
+                    '$menuIds',
+                    []
+                  ]
+                }
+              }
+            }
+          }
+        }
       ]).toArray();
       res.send(result);
     })
@@ -392,8 +418,8 @@ async function run() {
 
 
     // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    await client.db("admin").command({ ping: 1 });
+    console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
