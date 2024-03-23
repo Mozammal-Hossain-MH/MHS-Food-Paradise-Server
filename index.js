@@ -199,6 +199,31 @@ async function run() {
       res.send(result);
     })
 
+    app.get('/reviews/:email', async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const result = await reviewsCollection.find(query).toArray();
+      res.send(result);
+    })
+
+    app.put('/reviews', verifyToken, async (req, res) => {
+      const review = req.body;
+      const filter = { email: review.email };
+      const options = { upsert: true };
+      const updatedDoc = {
+        $set: {
+          email: review.email,
+          name: review.name,
+          favouriteRecipe: review.favouriteRecipe,
+          suggestion: review.suggestion,
+          details: review.details,
+          rating: review.rating
+        }
+      }
+      const result = await reviewsCollection.updateOne(filter, updatedDoc, options);
+      res.send(result);
+    })
+
     // carts collection
 
     app.get('/carts', verifyToken, async (req, res) => {
@@ -222,8 +247,13 @@ async function run() {
     })
 
     // reservation collection
-    app.get('/reservation', verifyToken, async (req, res) => {
-      const email = req.query.email;
+    app.get('/reservation', async (req, res) => {
+      const result = await reservationsCollection.find().toArray();
+      res.send(result);
+    })
+
+    app.get('/reservation/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
       const query = { userEmail: email };
       const result = await reservationsCollection.find(query).toArray();
       res.send(result);
@@ -236,7 +266,7 @@ async function run() {
       res.send(result);
     })
 
-    app.delete('/reservation/:id', async (req, res) => {
+    app.delete('/reservation/:id', verifyToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await reservationsCollection.deleteOne(query);
@@ -263,8 +293,19 @@ async function run() {
     })
 
     // payment related api
-    app.get('/payments', verifyToken, async (req, res) => {
-      const email = req.query.email;
+    app.get('/booking-payments', async (req, res) => {
+      const result = await paymentsCollection.aggregate([
+        {
+          $match: {
+            menuIds: false
+          }
+        }
+      ]).toArray();
+      res.send(result);
+    })
+
+    app.get('/payments/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
       // if(email !== req.decoded.email){
       //   return res.status(403).send({message: 'forbidden'})
       // }
@@ -331,6 +372,7 @@ async function run() {
       })
     })
 
+
     /**
      * ------------------------
      * Non efficient way
@@ -342,11 +384,11 @@ async function run() {
     */
 
     // using aggregate pipeline
-    app.get('/order-stats', async (req, res) => {
+    app.get('/order-stats', verifyToken, verifyAdmin, async (req, res) => {
       const result = await paymentsCollection.aggregate([
         {
           $match: {
-            menuIds: {$ne: false}
+            menuIds: { $ne: false }
           }
         },
         {
